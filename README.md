@@ -2,40 +2,40 @@
 
 *Notes from the UBC Formula Electric battery management system, spring 2026.*
 
-Every so often you do a piece of work that comes out clean, gets merged, and teaches you something completely different from what you set out to learn. This is one of those. I spent a few weeks moving our battery monitor off interrupt-driven SPI and onto DMA, fought a protocol bug that had nothing to do with DMA, built the thing properly, instrumented it, measured it, and found no improvement at all.
+I spent a few weeks moving our battery monitor's SPI driver from interrupt-driven to DMA on UBC Formula Electric's BMS. Along the way I fixed a protocol bug that had nothing to do with DMA, built the state machine properly, instrumented both versions with SystemView, and measured them against each other. The DMA path was not faster.
 
-The measurement is the interesting part, so I want to walk through it honestly rather than quietly deleting the traces and writing a post about my nice state machine.
+I could just write about the state machine and leave it there, but the measurement is the actual interesting part. So here's the whole thing, including the week I spent chasing the wrong bug.
 
-## What the BMS is actually doing
+## What the BMS is doing
 
-Our accumulator is monitored by a chain of ADBMS6830B cell monitors talking to an STM32H7 over isoSPI. The highest-frequency job in the whole system is reading cell voltages, and it is not a single transfer. It is a sequence:
+Our accumulator is monitored by a chain of **ADBMS6830B** cell monitors talking to an **STM32H7** over isoSPI. The highest-frequency job in the system is reading cell voltages, and it's not one transfer, it's a sequence:
 
 ```
 CLRCELL  ->  ADCV  ->  PLCADC  ->  RDCVA .. RDCVE
  clear      start      poll        read 5 register groups
 ```
 
-Every command carries a 15-bit PEC on the command word, and every register group that comes back has its own PEC to validate. So a "read the cell voltages" operation is really eight separate SPI transactions with error checking sprinkled through it.
+Every command carries a 15-bit PEC on the command word, and every register group that comes back has its own PEC to validate. So "read the cell voltages" is actually eight separate SPI transactions, each with its own error checking.
 
-In the original implementation each of those eight was an interrupt-driven transfer. The acquisition task fired a transfer, blocked, woke on the completion interrupt, did a little bookkeeping, fired the next one, blocked again. Eight round trips through the scheduler for one logical operation. That felt wasteful, and DMA is the obvious answer: let the peripheral move the bytes, chain the whole sequence inside the ISR, and let the task block exactly once at the start and wake exactly once at the end.
+In the original implementation, each of those eight was an interrupt-driven transfer: fire, block, wake on the completion interrupt, do some bookkeeping, fire the next one, block again. Eight round trips through the scheduler for one logical operation. DMA is the obvious fix: let the peripheral move the bytes, chain the whole sequence inside the ISR, and have the task block exactly once at the start and wake exactly once at the end.
 
-That was the plan. The plan was fine. Getting there was not.
+That was the plan, and it was a good one. Getting there took a week longer than it should have.
 
-## A week lost to the wrong three theories
+## Three wrong theories
 
-The first DMA build produced garbage. I would write the configuration registers, read them back, and get values that had nothing to do with what I had just written.
+The first DMA build produced garbage. I'd write the configuration registers, read them back, and get values that had nothing to do with what I'd just written.
 
-I burned real time on three explanations, in this order:
+I wasted a week on three explanations, in this order:
 
-**Cache coherency.** This is the classic DMA bug on an H7. DMA writes straight to SRAM, the CPU reads a stale cache line, and you get exactly this symptom. I added cache maintenance and the behaviour changed, which felt like confirmation. It was not. Our project configuration is supposed to have the D-Cache disabled entirely, so "clearing the cache fixed it" should have read as an alarm rather than a diagnosis. If the cache is off, clearing it cannot be what helped. I noticed that at the time, wrote it in my notes as a question, and then kept going anyway, which is its own lesson.
+**Cache coherency.** This is the classic DMA bug on an H7: DMA writes straight to SRAM, the CPU reads a stale cache line, and you get exactly this symptom. I added cache maintenance and the behavior changed, which I took as confirmation. It wasn't. Our project is supposed to run with D-Cache disabled entirely, so if the cache is off, clearing it can't be what fixed anything. I actually wrote that contradiction down as a question in my notes at the time, and kept going anyway. Noted it, ignored it.
 
 **Buffer alignment.** I aligned the DMA buffers to 32 bytes as a precaution. This changed nothing. It was never going to change anything. I did it because it was easy and I wanted to feel like I was making progress.
 
-**Random DMA corruption.** Not a theory. Just the thing you start to believe around 2am when the first two have not worked.
+**Random DMA corruption.** Not a theory. Just the thing you start believing around 2am when the first two haven't worked.
 
-The real answer was in the datasheet, in the section on command framing, which I had read and not absorbed. To reduce transfer count I had batched `WRCFGA` and `WRCFGB` into one continuous SPI transaction. The ADBMS does not allow that.
+The real answer was in the datasheet, in the section on command framing, which I'd read and not actually absorbed. To cut down on transfer count I'd batched `WRCFGA` and `WRCFGB` into one continuous SPI transaction. The ADBMS does not allow that.
 
-I did not have a logic analyzer on the bus, so the diagnosis came from the datasheet plus register readback over the debugger, not from a captured waveform. The traces below are SystemView task timelines from the same debugging sessions. They show what the CPU was doing while I chased this, not the SPI line itself, so treat them as debugging context rather than proof of the framing bug.
+I didn't have a logic analyzer on the bus, so the diagnosis came from the datasheet plus register readback over the debugger, not a captured waveform. The traces below are SystemView task timelines from the same debugging sessions. They show what the CPU was doing while I chased this, not the SPI line itself, so treat them as debugging context, not proof of the framing bug.
 
 <p align="center">
   <img src="docs/img/cs-framing-01.png" width="500" alt="SystemView task timeline captured on March 7, while WRCFGA and WRCFGB were still batched into one transfer">
@@ -54,7 +54,7 @@ I did not have a logic analyzer on the bus, so the diagnosis came from the datas
 
 Every ADBMS command needs its own CS frame. CS goes high at the end of a command, stays high for at least 2 microseconds, then goes low again for the next one. Chip select on this part is not just bus arbitration. It is part of the command protocol, and the gap is how the device knows one command ended and another began.
 
-Splitting each command into its own CS-framed DMA transfer fixed it completely and permanently, confirmed by clean register readback afterward.
+Splitting each command into its own CS-framed DMA transfer fixed it, completely and permanently. Confirmed by clean register readback afterward.
 
 <p align="center">
   <img src="docs/img/dma-corrected-01.png" width="500" alt="SystemView timeline from March 14, after splitting each command into its own CS-framed transfer, with Cortex-M exception tracking now enabled">
@@ -66,29 +66,29 @@ Splitting each command into its own CS-framed DMA transfer fixed it completely a
   <br><em>Another snapshot from the same corrected run.</em>
 </p>
 
-The generalizable lesson, and the reason I am writing this section at all: when a peripheral works under polled or interrupt-driven access and breaks under DMA, the DMA engine is usually innocent. The slower path was accidentally providing timing that the protocol required, and DMA took that timing away. Look for what the slow path was giving you for free before you start suspecting the hardware.
+The general lesson, and the reason this section exists at all: when a peripheral works fine under polled or interrupt-driven access and breaks under DMA, the DMA engine usually isn't the problem. The slow path was giving you timing the protocol needed, and DMA took it away. Check what the slow path was doing for you before you go blaming the hardware.
 
 ## Building it properly
 
-Once the framing was right, the actual rewrite came together quickly. The core is a phase-based state machine that advances entirely from the SPI transfer complete ISR:
+Once the framing was right, the rewrite came together fast. The core is a phase-based state machine that advances entirely from the SPI transfer-complete ISR:
 
 ```
 CLEARING -> STARTING -> POLLING -> READING -> IDLE
 ```
 
-I parameterised the pipeline rather than hardcoding the voltage sequence, because the same shape applies to temperature and status readback. An `AdcDmaJob` holds the clear, start, poll, and read commands plus a destination buffer, and `AdcGroupResult` holds the raw bytes and PEC validity for one register group. Adding temperature acquisition later means defining a job with `CLRAUX / ADAX_BASE / PLAUX / RDAUXA..D` and calling the same entry point. No state machine changes.
+I **parameterized** the pipeline instead of hardcoding the voltage sequence, since the same shape applies to temperature and status readback. An `AdcDmaJob` holds the clear/start/poll/read commands plus a destination buffer, and `AdcGroupResult` holds the raw bytes and PEC validity for one register group. Adding temperature acquisition later just means defining a job with `CLRAUX / ADAX_BASE / PLAUX / RDAUXA..D` and calling the same entry point. No state machine changes needed.
 
-The transfer itself builds a full-duplex packet, which is the part that always looks strange the first time you see it: a command word, its PEC15, and then a run of `0xFF` dummy bytes whose only job is to clock the response out of the device.
+The transfer itself builds a full-duplex packet, which looks strange the first time you see it: a command word, its PEC15, then a run of `0xFF` dummy bytes whose only job is to clock the response out of the device.
 
-One subtlety worth recording. The shared SPI layer originally fired a single unconditional pair of completion and error callbacks. With two state machines now sharing the bus, configuration writes and ADC reads, that meant the configuration busy flag was being set spuriously during ADC transfers. The fix was a dispatch layer that routes completion and error to whichever state machine currently owns the bus, with weak stubs in the shared HAL that the BMS overrides at link time, so boards without an ADBMS still compile.
+One thing worth noting: the shared SPI layer originally fired a single unconditional pair of completion and error callbacks. With two state machines now sharing the bus (configuration writes and ADC reads), that meant the configuration busy flag was getting set spuriously during ADC transfers. Fixed it with a dispatch layer that routes completion/error to whichever state machine currently owns the bus, with weak stubs in the shared HAL that the BMS overrides at link time so boards without an ADBMS still compile.
 
-Net effect on the calling task: five register group reads chain back to back through the ISR, `vTaskNotifyGiveFromISR` releases the task once at the end, and between those two points the task consumes zero CPU.
+Net effect for the calling task: five register group reads chain back to back through the ISR, `vTaskNotifyGiveFromISR` releases the task once at the end, and in between the task burns zero CPU.
 
 ## Measuring it
 
-This is where it gets uncomfortable.
+This is where it stops going well.
 
-I instrumented both implementations with Segger SystemView, enabled Cortex-M exception tracking so ISR entry and exit show up on the timeline instead of being invisible, and captured identical command sequences on both branches.
+I instrumented both implementations with Segger SystemView, enabled Cortex-M exception tracking so ISR entry/exit actually show up on the timeline instead of being invisible, and captured identical command sequences on both branches.
 
 <p align="center">
   <img src="docs/img/systemview-interrupt-01.png" width="700" alt="SystemView timeline of the interrupt-driven SPI path">
@@ -114,17 +114,17 @@ The DMA path did not measurably reduce CPU time. The two timelines look basicall
 
 ## Why nothing happened
 
-I sat with the traces for a while, and there are two explanations that both fit.
+I looked at the traces for a while and landed on two explanations that both fit.
 
-**There was nothing else for the CPU to do.** DMA does not make a transfer finish sooner. It frees the CPU while the transfer is in flight. If no other task is ready to run in that window, those freed cycles go straight to the idle task and the wall-clock timeline is identical. The benefit is real, it is just invisible in a trace of a system that has nothing better to do. It should appear the moment there is competing work at the same priority band, which on a real car there absolutely is.
+**There was nothing else for the CPU to do.** DMA doesn't make a transfer finish sooner, it frees the CPU while the transfer is in flight. If no other task is ready to run in that window, those freed cycles go straight to the idle task and the wall-clock timeline looks identical. The benefit is real, it's just invisible in a trace of a system with nothing better to do. It should show up the moment there's competing work at the same priority band, which on a real car there is.
 
-**The test commands were too short to expose the overhead I was trying to remove.** The SPI peripheral does not necessarily interrupt once per byte. With a FIFO it interrupts on half-full or full thresholds. A short configuration command may fit entirely inside the FIFO, in which case the interrupt-driven path takes roughly the same number of ISR entries as the DMA path and the two traces converge by construction. I was not measuring the difference. I was measuring a case where there is no difference to measure.
+**The test commands were too short to expose the overhead I was trying to remove.** The SPI peripheral doesn't necessarily interrupt once per byte. With a FIFO it interrupts on half-full or full thresholds. A short configuration command can fit entirely inside the FIFO, so the interrupt-driven path ends up taking roughly the same number of ISR entries as the DMA path and the two traces converge by construction. I wasn't measuring the difference. I was measuring a case where there's no difference to measure.
 
-The second one is a benchmark design failure and it is entirely mine. A configuration read and write is the easiest thing to instrument, so that is what I instrumented, and it happens to be the workload where the optimisation cannot show up. A full voltage acquisition across five register groups moves enough bytes to cross those FIFO thresholds repeatedly. That is the test I should have run first.
+The second one is a benchmark design failure, and it's entirely on me. A configuration read/write is the easiest thing to instrument, so that's what I instrumented, and it happens to be the exact workload where the optimization can't show up. A full voltage acquisition across five register groups moves enough bytes to cross those FIFO thresholds repeatedly. That's the test I should have run first.
 
-So the honest summary is: the code is better, the architecture is more extensible, the CS framing bug is genuinely fixed, and I have no data yet showing the performance benefit I set out to demonstrate. Those are four separate claims and only one of them is a disappointment.
+Honest summary: the code is better, the architecture is more extensible, the CS framing bug is genuinely fixed, and I don't have data yet showing the performance benefit I set out to prove. Three wins and one open question.
 
-## What is next
+## What's next
 
 - Re-run the comparison against a full voltage acquisition instead of a configuration cycle
 - Re-run under scheduler load, with competing tasks, so the freed CPU time has somewhere to go
@@ -132,4 +132,4 @@ So the honest summary is: the code is better, the architecture is more extensibl
 - Extend the job abstraction to temperature acquisition
 - Reconcile the DMA tick with the reworked job scheduler so the voltage task actually runs the DMA path
 
-And one thing still genuinely unresolved: why cache maintenance changed behaviour at all, when the D-Cache is supposed to be disabled in our configuration. Either it is not disabled where I think it is, or the effect I attributed to cache clearing was a timing side effect of the extra instructions, which would fit the CS framing root cause a little too neatly to ignore.
+One thing is still unresolved: why cache maintenance changed behavior at all, when D-Cache is supposed to be disabled in our config. Either it's not actually disabled where I think it is, or the effect I attributed to cache clearing was really just a timing side effect of running extra instructions, which lines up suspiciously well with the CS framing root cause.
