@@ -39,7 +39,7 @@ I didn't have a logic analyzer on the bus, so the diagnosis came from the datash
 
 <p align="center">
   <img src="docs/img/cs-framing-01.png" width="500" alt="SystemView task timeline captured on March 7, while WRCFGA and WRCFGB were still batched into one transfer">
-  <br><em>Task-level SystemView trace from the session where the batched-command bug was still present. Exception tracking wasn't enabled yet, so individual ISRs don't show up here, only their effect on task timing.</em>
+  <br><em>Task-level SystemView trace from the session where the batched-command bug was still present.</em>
 </p>
 
 <p align="center">
