@@ -101,8 +101,8 @@ I instrumented both implementations with Segger SystemView, enabled Cortex-M exc
 </p>
 
 <p align="center">
-  <img src="docs/img/systemview-interrupt-03.png" width="700" alt="Per-phase timing breakdown for the interrupt-driven path">
-  <br><em>Per-phase breakdown across the command sequence.</em>
+  <img src="docs/img/systemview-interrupt-03.png" width="700" alt="SystemView timeline with a tooltip showing Task1Hz run-time stats for the interrupt-driven path">
+  <br><em>Hovering the Task1Hz lane pulls up its run-time stats: min, max, last. Just that one task's numbers, not a phase-by-phase breakdown.</em>
 </p>
 
 <p align="center">
