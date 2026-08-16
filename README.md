@@ -8,7 +8,7 @@ I could just write about the state machine and leave it there, but the measureme
 
 ## What the BMS is doing
 
-Our accumulator is monitored by a chain of **ADBMS6830B** cell monitors talking to an **STM32H7** over isoSPI. The highest-frequency job in the system is reading cell voltages, and it's not one transfer, it's a sequence:
+Our accumulator is monitored by a chain of **ADBMS6830B** cell monitors talking to an **STM32H7** over isoSPI. The highest-frequency job in the system is reading cell stats, and it's not one transfer, it's a sequence:
 
 ```
 CLRCELL  ->  ADCV  ->  PLCADC  ->  RDCVA .. RDCVE
