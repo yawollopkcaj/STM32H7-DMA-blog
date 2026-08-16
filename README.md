@@ -37,10 +37,6 @@ I wasted a week on three explanations, in this order:
 
 **Cache coherency.** This is the classic DMA bug on an H7: DMA writes straight to SRAM, the CPU reads a stale cache line, and you get exactly this symptom. I added cache maintenance and the behavior changed, which I took as confirmation. It wasn't. Our project is supposed to run with D-Cache disabled entirely, so if the cache is off, clearing it can't be what fixed anything. I actually wrote that contradiction down as a question in my notes at the time, and kept going anyway. Noted it, ignored it.
 
-**Buffer alignment.** I aligned the DMA buffers to 32 bytes as a precaution. This changed nothing. It was never going to change anything. I did it because it was easy and I wanted to feel like I was making progress.
-
-**Random DMA corruption.** Not a theory. Just the thing you start believing around 2am when the first two haven't worked.
-
 The real answer was in the datasheet, in the section on command framing, which I'd read and not actually absorbed. To cut down on transfer count I'd batched `WRCFGA` and `WRCFGB` into one continuous SPI transaction. The ADBMS does not allow that.
 
 I didn't have a logic analyzer on the bus, so the diagnosis came from the datasheet plus register readback over the debugger, not a captured waveform. The traces below are SystemView task timelines from the same debugging sessions. They show what the CPU was doing while I chased this, not the SPI line itself, so treat them as debugging context, not proof of the framing bug.
