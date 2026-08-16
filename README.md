@@ -21,6 +21,14 @@ In the original implementation, each of those eight was an interrupt-driven tran
 
 That was the plan, and it was a good one. Getting there took a week longer than it should have.
 
+## How DMA interacts with SPI
+
+The STM32H7 SPI peripheral is responsible for generating SCK, shifting data on MOSI, sampling MISO, and maintaining the transmit/receive FIFOs. DMA sits between memory and the SPI data registers. For transmission, DMA feeds the SPI TX register from a memory buffer. For reception, DMA copies bytes from the SPI RX register into a memory buffer. Because SPI is full-duplex, both transfers occur simultaneously.
+
+A read transaction therefore includes the command and PEC bytes in the TX buffer, followed by dummy bytes such as 0xFF to generate the clock cycles needed for the ADBMS to return data. The RX buffer contains the bytes sampled during the entire transaction, including response data and any offset caused by the command phase.
+
+The DMA completion interrupt advances the acquisition state machine from CLEARING to STARTING, POLLING, READING, and finally IDLE. DMA does not understand ADBMS commands or PEC values; it only moves bytes. The state machine interprets the completed RX buffer and validates the protocol.
+
 ## Three wrong theories
 
 The first DMA build produced garbage. I'd write the configuration registers, read them back, and get values that had nothing to do with what I'd just written.
