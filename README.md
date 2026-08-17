@@ -29,13 +29,11 @@ A read transaction therefore includes the command and PEC bytes in the TX buffer
 
 The DMA completion interrupt advances the acquisition state machine from CLEARING to STARTING, POLLING, READING, and finally IDLE. DMA does not understand ADBMS commands or PEC values; it only moves bytes. The state machine interprets the completed RX buffer and validates the protocol.
 
-## Three wrong theories
+## Troubleshooting
 
 The first DMA build produced garbage. I'd write the configuration registers, read them back, and get values that had nothing to do with what I'd just written.
 
-I wasted a week on three explanations, in this order:
-
-**Cache coherency.** This is the classic DMA bug on an H7: DMA writes straight to SRAM, the CPU reads a stale cache line, and you get exactly this symptom. I added cache maintenance and the behavior changed, which I took as confirmation. It wasn't. Our project is supposed to run with D-Cache disabled entirely, so if the cache is off, clearing it can't be what fixed anything. I actually wrote that contradiction down as a question in my notes at the time, and kept going anyway. Noted it, ignored it.
+Cache coherency is the classic DMA bug on an H7: DMA writes straight to SRAM, the CPU reads a stale cache line, and you get exactly this symptom. I added cache maintenance and the behavior changed, which I took as confirmation. It wasn't. Our project is supposed to run with D-Cache disabled entirely, so if the cache is off, clearing it can't be what fixed anything. I actually wrote that contradiction down as a question in my notes at the time, and kept going anyway. Noted it, ignored it.
 
 The real answer was in the datasheet, in the section on command framing, which I'd read and not actually absorbed. To cut down on transfer count I'd batched `WRCFGA` and `WRCFGB` into one continuous SPI transaction. The ADBMS does not allow that.
 
@@ -80,11 +78,9 @@ Once the framing was right, the rewrite came together fast. The core is a phase-
 CLEARING -> STARTING -> POLLING -> READING -> IDLE
 ```
 
-I **parameterized** the pipeline instead of hardcoding the voltage sequence, since the same shape applies to temperature and status readback. An `AdcDmaJob` holds the clear/start/poll/read commands plus a destination buffer, and `AdcGroupResult` holds the raw bytes and PEC validity for one register group. Adding temperature acquisition later just means defining a job with `CLRAUX / ADAX_BASE / PLAUX / RDAUXA..D` and calling the same entry point. No state machine changes needed.
+I parameterized the pipeline instead of hardcoding the voltage sequence, since the same shape applies to temperature and status readback. An `AdcDmaJob` holds the clear/start/poll/read commands plus a destination buffer, and `AdcGroupResult` holds the raw bytes and PEC validity for one register group. Adding temperature acquisition later just means defining a job with `CLRAUX / ADAX_BASE / PLAUX / RDAUXA..D` and calling the same entry point. No state machine changes needed.
 
 The transfer itself builds a full-duplex packet, which looks strange the first time you see it: a command word, its PEC15, then a run of `0xFF` dummy bytes whose only job is to clock the response out of the device.
-
-One thing worth noting: the shared SPI layer originally fired a single unconditional pair of completion and error callbacks. With two state machines now sharing the bus (configuration writes and ADC reads), that meant the configuration busy flag was getting set spuriously during ADC transfers. Fixed it with a dispatch layer that routes completion/error to whichever state machine currently owns the bus, with weak stubs in the shared HAL that the BMS overrides at link time so boards without an ADBMS still compile.
 
 Net effect for the calling task: five register group reads chain back to back through the ISR, `vTaskNotifyGiveFromISR` releases the task once at the end, and in between the task burns zero CPU.
 
