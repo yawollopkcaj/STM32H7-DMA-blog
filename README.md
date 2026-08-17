@@ -78,11 +78,9 @@ Once the framing was right, the rewrite came together fast. The core is a phase-
 CLEARING -> STARTING -> POLLING -> READING -> IDLE
 ```
 
-I parameterized the pipeline instead of hardcoding the voltage sequence, since the same shape applies to temperature and status readback. An `AdcDmaJob` holds the clear/start/poll/read commands plus a destination buffer, and `AdcGroupResult` holds the raw bytes and PEC validity for one register group. Adding temperature acquisition later just means defining a job with `CLRAUX / ADAX_BASE / PLAUX / RDAUXA..D` and calling the same entry point. No state machine changes needed.
+The phase-based state machine is shared by the interrupt-driven and DMA implementations. Each phase prepares an ADBMS command and its full-duplex TX/RX buffers. In the interrupt-driven implementation, SPI/FIFO events service the transfer directly. In the DMA implementation, TX and RX DMA channels move the buffers through the STM32H7 SPI peripheral, while the completion path advances the same state machine. DMA changes how bytes are moved; it does not change the ADBMS sequencing, CS framing, or PEC validation.
 
-The transfer itself builds a full-duplex packet, which looks strange the first time you see it: a command word, its PEC15, then a run of `0xFF` dummy bytes whose only job is to clock the response out of the device.
-
-Net effect for the calling task: five register group reads chain back to back through the ISR, `vTaskNotifyGiveFromISR` releases the task once at the end, and in between the task burns zero CPU.
+For each phase, the system asserts CS, starts the SPI transfer, waits for the actual SPI end-of-transfer condition, deasserts CS, and advances to the next phase. Only after the final register-group read does the ISR call vTaskNotifyGiveFromISR() to wake the acquisition task.
 
 ## Measuring it
 
