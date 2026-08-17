@@ -100,8 +100,6 @@ The ISR labels in these traces are exception numbers reported by the Cortex-M in
 
 These values are `IRQn + 16`, because Cortex-M exception numbers include the 16 core exceptions before the external interrupt table.
 
-The exact mapping depends on the MCU variant and on whether SystemView is displaying exception numbers or raw IRQ numbers, so this mapping should be checked against the device header and startup file.
-
 <p align="center">
   <img src="docs/img/systemview-interrupt-01.png" width="700" alt="SystemView timeline of the interrupt-driven SPI path">
   <br><em>The interrupt-driven path with ISR logging enabled.</em>
