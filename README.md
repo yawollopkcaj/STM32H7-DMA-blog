@@ -15,11 +15,13 @@ CLRCELL  ->  ADCV  ->  PLCADC  ->  RDCVA .. RDCVE
  clear      start      poll        read 5 register groups
 ```
 
-Every command carries a 15-bit PEC on the command word, and every register group that comes back has its own PEC to validate. So "read the cell voltages" is actually eight separate SPI transactions, each with its own error checking.
-
 In the original implementation, each of those eight was an interrupt-driven transfer: fire, block, wake on the completion interrupt, do some bookkeeping, fire the next one, block again. Eight round trips through the scheduler for one logical operation. DMA is the obvious fix: let the peripheral move the bytes, chain the whole sequence inside the ISR, and have the task block exactly once at the start and wake exactly once at the end.
 
 That was the plan, and it was a good one. Getting there took a week longer than it should have.
+
+### A note on SPI CRC versus ADBMS PEC
+
+The STM32H7 SPI peripheral has configurable hardware CRC support, but we handled the ADBMS PEC in software. PEC15 and PEC10 are part of the ADBMS packet format rather than a generic SPI CRC appended to the entire transfer. Software therefore generated the command PEC and validated the response PEC after the DMA transfer completed.
 
 ## How DMA interacts with SPI
 
