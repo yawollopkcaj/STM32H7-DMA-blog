@@ -82,11 +82,25 @@ The phase-based state machine is shared by the interrupt-driven and DMA implemen
 
 For each phase, the system asserts CS, starts the SPI transfer, waits for the actual SPI end-of-transfer condition, deasserts CS, and advances to the next phase. Only after the final register-group read does the ISR call vTaskNotifyGiveFromISR() to wake the acquisition task.
 
-## Measuring it
+## Analysis
 
 This is where it stops going well.
 
 I instrumented both implementations with Segger SystemView, enabled Cortex-M exception tracking so ISR entry/exit actually show up on the timeline instead of being invisible, and captured identical command sequences on both branches.
+
+### Reading the SystemView trace
+
+The ISR labels in these traces are exception numbers reported by the Cortex-M instrumentation, rather than arbitrary application identifiers. For the STM32H743/H747 interrupt vector layout, the relevant values are:
+
+- ISR 27: DMA1 Stream 0
+- ISR 28: DMA1 Stream 1
+- ISR 29: DMA1 Stream 2
+- ISR 44: TIM2
+- ISR 100: SPI4
+
+These values are `IRQn + 16`, because Cortex-M exception numbers include the 16 core exceptions before the external interrupt table.
+
+The exact mapping depends on the MCU variant and on whether SystemView is displaying exception numbers or raw IRQ numbers, so this mapping should be checked against the device header and startup file.
 
 <p align="center">
   <img src="docs/img/systemview-interrupt-01.png" width="700" alt="SystemView timeline of the interrupt-driven SPI path">
